@@ -1,0 +1,18 @@
+title = "tokbuff-sso gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Test fixtures and example values only"
+regexes = [
+  '''k{16}''',
+  '''s{32}''',
+  '''x{32}''',
+  '''secret''',
+]
+paths = [
+  '''tests/''',
+  '''examples/''',
+  '''README\.md''',
+]
