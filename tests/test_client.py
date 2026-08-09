@@ -14,7 +14,7 @@ async def test_email_exists(httpx_mock):
     assert await client.email_exists("a@b.com") is True
     req = httpx_mock.get_request()
     assert req.headers["x-sso-api-key"] == KEY
-    assert "a@b.com" in str(req.url)
+    assert "email=a%40b.com" in str(req.url)
 
 
 async def test_email_exists_false(httpx_mock):
