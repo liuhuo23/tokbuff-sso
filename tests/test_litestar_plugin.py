@@ -76,6 +76,20 @@ async def test_exchange_with_valid_ticket_logs_in():
     assert ("provision", "a@b.com") in calls  # JIT because finder returns None
 
 
+async def test_exchange_with_query_ticket_logs_in():
+    """URL 跳转携带的 ticket（query 参数）也应能自动登录。"""
+    calls = []
+    app = _build_app(provision_calls=calls)
+    token = sign_ticket("a@b.com", "forum", "u-9", ttl=900, secret=SECRET)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://tokbuff.com"
+    ) as c:
+        r = await c.post(f"/api/v1/auth/sso-exchange?sso_ticket={token}")
+    assert r.status_code == 200
+    assert r.json()["access_token"] == "tok"
+    assert ("provision", "a@b.com") in calls
+
+
 async def test_exchange_with_existing_user_no_provision():
     calls = []
     app = _build_app(provision_calls=calls, find_calls=calls)

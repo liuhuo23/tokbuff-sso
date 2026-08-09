@@ -60,7 +60,10 @@ class SsoPlugin(InitPluginProtocol):
 
         @post(cfg.exchange_path)
         async def exchange(request: Request) -> Response[dict[str, Any]]:
+            # ticket 来源：cookie（静默探测）或 URL query 参数（跳转携带，60s 短效）
             token = request.cookies.get(cfg.cookie_name)
+            if not token:
+                token = request.query_params.get("sso_ticket")
             if not token:
                 raise HTTPException(status_code=401, detail="no sso ticket")
             try:
