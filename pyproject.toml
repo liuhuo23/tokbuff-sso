@@ -21,3 +21,8 @@ packages = ["src/tokbuff_sso"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+
+[dependency-groups]
+dev = [
+    "pytest-httpx>=0.36.2",
+]
