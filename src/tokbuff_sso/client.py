@@ -26,6 +26,18 @@ class PasswordMeta:
     source: str = "manual"  # manual | sso_jit | sso_synced
 
 
+def _unwrap_payload(data: dict) -> dict:
+    """兼容两种对端响应格式：裸格式 {"hash":...} 与包装格式 {"code":0,"data":{...}}。
+
+    部分站点（如主站 tokbuff）有全局响应包装中间件，所有端点返回
+    {"code":0,"message":"","data":{...}}；共享库早期版本只认裸格式，
+    导致解析到空 hash（"peer returned empty password hash"）。
+    """
+    if isinstance(data, dict) and isinstance(data.get("data"), dict):
+        return data["data"]
+    return data
+
+
 class PeerClient:
     def __init__(self, peer: PeerConfig, timeout: float = 5.0) -> None:
         self._peer = peer
@@ -43,7 +55,8 @@ class PeerClient:
             raise PeerUnavailable(str(exc)) from exc
         if resp.status_code != 200:
             raise PeerUnavailable(f"peer returned {resp.status_code}")
-        return bool(resp.json().get("exists"))
+        payload = _unwrap_payload(resp.json())
+        return bool(payload.get("exists"))
 
     async def fetch_password_meta(self, email: str) -> PasswordMeta:
         """Fetch the peer's password metadata for an email.
@@ -63,18 +76,18 @@ class PeerClient:
             raise PeerUnavailable(str(exc)) from exc
         if resp.status_code != 200:
             raise PeerUnavailable(f"peer returned {resp.status_code}")
-        data = resp.json()
-        h = str(data.get("hash") or "").strip()
+        payload = _unwrap_payload(resp.json())
+        h = str(payload.get("hash") or "").strip()
         if not h:
             raise PeerUnavailable("peer returned empty password hash")
         return PasswordMeta(
             hash=h,
             changed_at=(
-                str(data["changed_at"]).strip()
-                if data.get("changed_at") is not None
+                str(payload["changed_at"]).strip()
+                if payload.get("changed_at") is not None
                 else None
             ),
-            source=str(data.get("source") or "manual").strip() or "manual",
+            source=str(payload.get("source") or "manual").strip() or "manual",
         )
 
 

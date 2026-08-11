@@ -118,3 +118,40 @@ async def test_push_password_meta_unreachable_raises(httpx_mock):
         await PeerClient(peer, timeout=1.0).push_password_meta(
             "a@b.com", "$2b$12$hash", None, "manual"
         )
+
+
+async def test_fetch_password_meta_wrapped_format(httpx_mock):
+    """兼容主站 {code,message,data:{...}} 全局包装格式。"""
+    peer = PeerConfig("forum", "https://forum.tokbuff.com", KEY)
+    httpx_mock.add_response(
+        json={
+            "code": 0,
+            "message": "",
+            "data": {
+                "hash": "$2b$12$wrapped",
+                "changed_at": "2026-08-11T10:00:00+00:00",
+                "source": "manual",
+            },
+        }
+    )
+    meta = await PeerClient(peer, timeout=2.0).fetch_password_meta("a@b.com")
+    assert meta.hash == "$2b$12$wrapped"
+    assert meta.changed_at == "2026-08-11T10:00:00+00:00"
+    assert meta.source == "manual"
+
+
+async def test_email_exists_wrapped_format(httpx_mock):
+    """兼容包装格式的 email-exists。"""
+    peer = PeerConfig("forum", "https://forum.tokbuff.com", KEY)
+    httpx_mock.add_response(json={"code": 0, "message": "", "data": {"exists": True}})
+    assert await PeerClient(peer, timeout=2.0).email_exists("a@b.com") is True
+
+
+async def test_fetch_password_meta_wrapped_empty_hash_raises(httpx_mock):
+    """包装格式下 hash 为空同样视为不可用。"""
+    peer = PeerConfig("forum", "https://forum.tokbuff.com", KEY)
+    httpx_mock.add_response(
+        json={"code": 0, "message": "", "data": {"hash": "", "changed_at": None}}
+    )
+    with pytest.raises(PeerUnavailable):
+        await PeerClient(peer, timeout=2.0).fetch_password_meta("a@b.com")
