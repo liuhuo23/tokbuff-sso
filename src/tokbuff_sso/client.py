@@ -76,3 +76,33 @@ class PeerClient:
             ),
             source=str(data.get("source") or "manual").strip() or "manual",
         )
+
+
+    async def push_password_meta(
+        self,
+        email: str,
+        hash: str,
+        changed_at: str | None,
+        source: str = "manual",
+    ) -> bool:
+        """Push this user's password metadata to the peer for adoption.
+
+        Returns True when the peer adopted (200), False when it rejected
+        (e.g. 409 — peer's own password is newer). Raises PeerUnavailable
+        on network errors.
+        """
+        try:
+            async with httpx.AsyncClient(timeout=self._timeout) as client:
+                resp = await client.post(
+                    f"{self._peer.base_url}/api/v1/auth/sso/password-push",
+                    json={
+                        "email": email,
+                        "hash": hash,
+                        "changed_at": changed_at,
+                        "source": source,
+                    },
+                    headers={"X-SSO-API-Key": self._peer.api_key},
+                )
+        except httpx.HTTPError as exc:
+            raise PeerUnavailable(str(exc)) from exc
+        return resp.status_code == 200
