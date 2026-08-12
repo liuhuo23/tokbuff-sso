@@ -20,7 +20,8 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, Text, func, select
+from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, Text, func, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -139,7 +140,11 @@ class SharedAuthClient:
     ) -> None:
         self.config = config
         self._engine = engine or create_async_engine(
-            config.database_url, pool_pre_ping=True
+            config.database_url,
+            pool_pre_ping=True,
+            pool_timeout=5,
+            # asyncpg 连接超时：共享库网络黑洞时快速失败（fail-open 不拖慢登录）
+            connect_args={"timeout": 5},
         )
         self._session_factory = async_sessionmaker(
             self._engine, class_=AsyncSession, expire_on_commit=False
@@ -166,30 +171,57 @@ class SharedAuthClient:
         """改密/重置/注册双写：存在则更新 hash + version+1，否则插入（version=1）。
 
         返回 ``(user, created)``。``changed_at`` 缺省为当前 UTC 时间。
+
+        并发安全：version 递增用原子 UPDATE（``password_version+1``），
+        避免读-改-写竞态丢失递增；并发插入冲突时回退到 UPDATE。
         """
         email = email.strip().lower()
         if not password_hash:
             raise SharedAuthError("password_hash is required")
         changed_at = changed_at or datetime.now(timezone.utc)
-        async with self._session_factory() as session:
-            user = await session.scalar(
-                select(SharedUser).where(SharedUser.email == email)
+
+        def _bump():
+            return (
+                update(SharedUser)
+                .where(SharedUser.email == email)
+                .values(
+                    password_hash=password_hash,
+                    password_changed_at=changed_at,
+                    password_version=SharedUser.password_version + 1,
+                )
+                .returning(SharedUser.id)
             )
-            if user is None:
-                user = SharedUser(
+
+        async with self._session_factory() as session:
+            # 已存在：原子 UPDATE（version+1）
+            row = (await session.execute(_bump())).scalar_one_or_none()
+            if row is not None:
+                await session.commit()
+                user = await session.scalar(
+                    select(SharedUser).where(SharedUser.email == email)
+                )
+                return user, False
+            # 不存在：插入 version=1；并发插入撞 unique 时回滚改走 UPDATE
+            session.add(
+                SharedUser(
                     email=email,
                     password_hash=password_hash,
                     password_version=1,
                     password_changed_at=changed_at,
                 )
-                session.add(user)
+            )
+            try:
                 await session.commit()
-                return user, True
-            user.password_hash = password_hash
-            user.password_version += 1
-            user.password_changed_at = changed_at
-            await session.commit()
-            return user, False
+            except IntegrityError:
+                await session.rollback()
+                row = (await session.execute(_bump())).scalar_one_or_none()
+                if row is None:  # pragma: no cover - 理论不可达
+                    raise SharedAuthError(f"upsert failed for {email!r}")
+                await session.commit()
+            user = await session.scalar(
+                select(SharedUser).where(SharedUser.email == email)
+            )
+            return user, True
 
     async def record_auth(
         self,
